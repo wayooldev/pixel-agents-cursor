@@ -2,8 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { DISCORD_INVITE_URL } from '../changelogData.js';
 import {
-  CLAUDE_CODE_INSTALL_COMMAND,
-  CLAUDE_CODE_URL,
+  CURSOR_PRODUCT_URL,
   INTRO_BUBBLE_EDGE_MARGIN_PX,
   INTRO_BUBBLE_MAX_WIDTH_PX,
   INTRO_BUBBLE_Z_INDEX,
@@ -65,13 +64,13 @@ const CLOSING_STEP = 3;
  * shared by both surfaces (the VS Code webview and the standalone browser
  * render this same component off the same server message).
  *
- * Steps: welcome → Claude Code → hooks consent → all set. The consent step is
- * the same first-run ask as before, now wrapped in a tour; its copy still
- * arrives from the server and its buttons still send `hooksConsentResponse`
- * the moment they are clicked. Back from the closing step re-opens the consent
- * step for a genuine change of mind — the server treats a revised answer as an
- * absolute statement and undoes a landed install when the revision asks for
- * that (consentGate's disable/revert actions).
+ * Steps: welcome → Cursor → hooks consent → all set. The consent step is the
+ * same first-run ask as before, now wrapped in a tour; its copy still arrives
+ * from the server and its buttons still send `hooksConsentResponse` the moment
+ * they are clicked. Back from the closing step re-opens the consent step for a
+ * genuine change of mind — the server treats a revised answer as an absolute
+ * statement and undoes a landed install when the revision asks for that
+ * (consentGate's disable/revert actions).
  *
  * Diegetic: a greeter character (char_0) stands near the office's bottom-left
  * corner and this component is its speech bubble, anchored up-right of its
@@ -218,7 +217,7 @@ export function IntroBubble({
 
   const titles = [
     'Welcome to Pixel Agents!',
-    'Powered by Claude Code',
+    'Made for Cursor',
     headline,
     installFailed ? "Hooks couldn't be installed" : "You're all set!",
   ];
@@ -291,21 +290,18 @@ export function IntroBubble({
         {step === CLAUDE_CODE_STEP && (
           <>
             <p className="text-sm m-0 mb-8">
-              The office watches your Claude Code sessions and brings them to life in here. New to
-              Claude Code? Download it first:
+              The office watches your Cursor Agent chats and brings them to life in here — one
+              character per conversation. Keep coding in Cursor; Pixel Agents handles the office.
             </p>
-            <div className="text-sm bg-btn-bg border-2 border-border py-4 px-8 mb-8 select-all">
-              {CLAUDE_CODE_INSTALL_COMMAND}
-            </div>
             <p className="text-sm m-0 mb-8">
-              For more info, visit{' '}
+              New to Cursor?{' '}
               <a
-                href={CLAUDE_CODE_URL}
+                href={CURSOR_PRODUCT_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-accent-bright hover:text-accent no-underline"
               >
-                claude.com/claude-code
+                cursor.com
               </a>
             </p>
           </>
@@ -322,9 +318,9 @@ export function IntroBubble({
           <>
             {installFailed ? (
               <p className="text-sm m-0 mb-8">
-                Something went wrong writing to your Claude Code settings, so the office will watch
-                your sessions the slower way instead. No worries, everything still works and you can
-                retry activating them any time from Settings.
+                Something went wrong writing to your Cursor hooks settings, so the office will miss
+                some live updates until hooks are on. No worries — you can retry anytime from
+                Settings.
               </p>
             ) : null}
             <p className="text-sm m-0 mb-8">

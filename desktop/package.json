@@ -1,0 +1,16 @@
+{
+  "name": "pixel-agents-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Windows Tauri shell for Pixel Agents standalone office",
+  "scripts": {
+    "stage": "node scripts/stage-server.mjs",
+    "smoke:server": "node scripts/smoke-staged-server.mjs",
+    "tauri": "tauri",
+    "dev": "npm run stage && tauri dev",
+    "build": "npm run stage && tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4"
+  }
+}

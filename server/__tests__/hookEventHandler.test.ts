@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentStateStore } from '../src/agentStateStore.js';
-import { HookEventHandler } from '../src/hookEventHandler.js';
+import { HookEventHandler, normalizeHookWorkspacePath } from '../src/hookEventHandler.js';
 import { claudeProvider } from '../src/providers/hook/claude/claude.js';
+import { cursorProvider } from '../src/providers/hook/cursor/cursor.js';
 import { SessionRouter } from '../src/sessionRouter.js';
 import type { AgentState } from '../src/types.js';
 
@@ -856,5 +857,123 @@ describe('HookEventHandler', () => {
         }
       }
     });
+  });
+
+  it('cursor preToolUse uses Cursor normalize and formatToolStatus', () => {
+    const agent = createTestAgent({ id: 1, isWaiting: true });
+    agents.set(1, agent);
+    handler.registerAgent('conv-1', 1);
+
+    handler.handleEvent('cursor', {
+      hook_event_name: 'preToolUse',
+      session_id: 'conv-1',
+      conversation_id: 'conv-1',
+      tool_name: 'Read',
+      tool_input: { path: '/src/office.ts' },
+      tool_use_id: 'tu-1',
+    });
+
+    const toolMsg = mockWebview.messages.find((m) => m.type === 'agentToolStart');
+    expect(toolMsg).toBeTruthy();
+    expect(toolMsg?.toolName).toBe('Read');
+    expect(toolMsg?.status).toBe('Reading office.ts');
+    expect(agent.hookDelivered).toBe(true);
+  });
+
+  it('cursor subagentStart and subagentStop create and clear a child', () => {
+    const agent = createTestAgent({ id: 1 });
+    agents.set(1, agent);
+    handler.registerAgent('conv-1', 1);
+
+    handler.handleEvent('cursor', {
+      hook_event_name: 'subagentStart',
+      session_id: 'conv-1',
+      subagent_id: 'sub-9',
+      subagent_type: 'explore',
+    });
+    const start = mockWebview.messages.find((m) => m.type === 'subagentToolStart');
+    expect(start?.parentToolId).toBe('sub-9');
+    expect(start?.status).toBe('Subtask: explore');
+
+    handler.handleEvent('cursor', {
+      hook_event_name: 'subagentStop',
+      session_id: 'conv-1',
+      subagent_id: 'sub-9',
+    });
+    const cleared = mockWebview.messages.find((m) => m.type === 'subagentClear');
+    expect(cleared?.parentToolId).toBe('sub-9');
+  });
+
+  it('normalizeHookWorkspacePath strips a leading slash from Windows drive paths', () => {
+    expect(normalizeHookWorkspacePath('/C:/Projects/wayool-ceo')).toBe('C:/Projects/wayool-ceo');
+    expect(normalizeHookWorkspacePath('C:\\Projects\\wayool-ceo')).toBe('C:\\Projects\\wayool-ceo');
+  });
+
+  it('cursor stop re-adopts a closed hooks-only session using the remembered cwd', () => {
+    const watchAll = { current: false };
+    const cursorHandler = new HookEventHandler(
+      agents,
+      waitingTimers,
+      permissionTimers,
+      cursorProvider,
+      new SessionRouter(),
+      watchAll,
+    );
+    const onExternal = vi.fn((sessionId: string, _transcript: string | undefined, cwd: string) => {
+      const id = 42;
+      agents.set(
+        id,
+        createTestAgent({
+          id,
+          sessionId,
+          projectDir: cwd,
+          jsonlFile: '',
+          hooksOnly: true,
+        }),
+      );
+      cursorHandler.registerAgent(sessionId, id);
+    });
+    cursorHandler.setLifecycleCallbacks({ onExternalSessionDetected: onExternal });
+
+    cursorHandler.handleEvent('cursor', {
+      hook_event_name: 'sessionStart',
+      session_id: 'conv-reopen',
+      conversation_id: 'conv-reopen',
+      workspace_roots: ['/C:/Projects/pixel-agents-cursor'],
+      composer_mode: 'agent',
+    });
+    // Pending only — no character yet.
+    expect(onExternal).not.toHaveBeenCalled();
+
+    // User closed the character: unregister and drop the agent, as closeAgent does.
+    // (First create via a confirming event.)
+    cursorHandler.handleEvent('cursor', {
+      hook_event_name: 'preToolUse',
+      session_id: 'conv-reopen',
+      conversation_id: 'conv-reopen',
+      tool_name: 'Read',
+      tool_input: { path: 'a.ts' },
+      tool_use_id: 't1',
+    });
+    expect(onExternal).toHaveBeenCalledWith(
+      'conv-reopen',
+      undefined,
+      'C:/Projects/pixel-agents-cursor',
+    );
+    cursorHandler.unregisterAgent('conv-reopen');
+    agents.delete(42);
+    onExternal.mockClear();
+
+    // Later stop has no workspace_roots — must still re-adopt from memory.
+    cursorHandler.handleEvent('cursor', {
+      hook_event_name: 'stop',
+      session_id: 'conv-reopen',
+      conversation_id: 'conv-reopen',
+    });
+    expect(onExternal).toHaveBeenCalledWith(
+      'conv-reopen',
+      undefined,
+      'C:/Projects/pixel-agents-cursor',
+    );
   });
 });

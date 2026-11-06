@@ -125,7 +125,7 @@ interface ExtensionMessageState {
   setHooksEnabled: (v: boolean) => void;
   /** Actual install state per provider (hooksStatus messages) — absent/false
    *  while first-run consent is pending, unlike hooksEnabled which defaults
-   *  true. Keyed by providerId; today's Settings checkbox reads 'claude'. */
+   *  true. Keyed by providerId; today's Settings checkbox reads 'cursor'. */
   hooksInstalled: Record<string, boolean>;
   /** Bumped per provider on every hooksStatus message. `hooksInstalled` alone cannot say "the server answered": a
    *  failed install re-reports the `false` already held, so no effect runs. The Intro needs the ARRIVAL to tell a
@@ -202,8 +202,8 @@ export function useExtensionMessages(
   const [externalAssetDirectories, setExternalAssetDirectories] = useState<string[]>([]);
   const [lastSeenVersion, setLastSeenVersion] = useState('');
   const [extensionVersion, setExtensionVersion] = useState('');
-  const [watchAllSessions, setWatchAllSessions] = useState(false);
-  const [alwaysShowLabels, setAlwaysShowLabels] = useState(false);
+  const [watchAllSessions, setWatchAllSessions] = useState(true);
+  const [alwaysShowLabels, setAlwaysShowLabels] = useState(true);
   const [ghostHeadlessAgents, setGhostHeadlessAgentsState] = useState(false);
   const [hooksEnabled, setHooksEnabled] = useState(true);
   const [hooksInstalled, setHooksInstalled] = useState<Record<string, boolean>>({});

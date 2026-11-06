@@ -93,7 +93,7 @@ function readHooksConsent(): boolean {
   try {
     const raw = fs.readFileSync(path.join(tmpBase, '.pixel-agents', 'config.json'), 'utf-8');
     const consent = (JSON.parse(raw) as { hooksConsent?: Record<string, string> }).hooksConsent;
-    return consent?.claude === 'granted';
+    return consent?.cursor === 'granted';
   } catch {
     return false;
   }
@@ -292,7 +292,7 @@ describe('/ws privileged-message gate', () => {
 
   /** Send setHooksEnabled over an accepted socket and let it settle. */
   async function sendToggle(socket: WebSocket, enabled: boolean): Promise<void> {
-    socket.send(JSON.stringify({ type: 'setHooksEnabled', providerId: 'claude', enabled }));
+    socket.send(JSON.stringify({ type: 'setHooksEnabled', providerId: 'cursor', enabled }));
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
 
@@ -480,7 +480,7 @@ describe('/ws privileged-message gate', () => {
     expect(await request).toBeNull();
 
     result.socket.send(
-      JSON.stringify({ type: 'hooksConsentResponse', providerId: 'claude', choice: 'install' }),
+      JSON.stringify({ type: 'hooksConsentResponse', providerId: 'cursor', choice: 'install' }),
     );
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(sideEffects).toEqual([]);
@@ -499,7 +499,7 @@ describe('/ws privileged-message gate', () => {
     sockets.push(result.socket);
 
     result.socket.send(
-      JSON.stringify({ type: 'hooksConsentResponse', providerId: 'claude', choice: 'install' }),
+      JSON.stringify({ type: 'hooksConsentResponse', providerId: 'cursor', choice: 'install' }),
     );
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(sideEffects).toEqual([true]);

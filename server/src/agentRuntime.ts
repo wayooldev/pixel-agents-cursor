@@ -154,7 +154,10 @@ export class AgentRuntime {
     // Wire hook lifecycle callbacks to shared agent operations
     this.hookEventHandler.setLifecycleCallbacks({
       onExternalSessionDetected: (sessionId, transcriptPath, cwd) => {
-        const projectDir = transcriptPath ? path.dirname(transcriptPath) : cwd;
+        // Cursor hooks may still arrive with `/C:/...` if an older handler path
+        // skipped normalize; keep the tracked-dir gate honest on Windows.
+        const normalizedCwd = cwd ? cwd.replace(/^[/\\]([A-Za-z]:)/, '$1') : cwd;
+        const projectDir = transcriptPath ? path.dirname(transcriptPath) : normalizedCwd;
         // Teammate session of a tracked lead? Attach it as a teammate character
         // instead of adopting a generic external agent -- and regardless of the
         // Watch All Sessions setting: tracking the lead is the opt-in for its
@@ -202,7 +205,7 @@ export class AgentRuntime {
         adoptExternalSessionFromHook(
           sessionId,
           transcriptPath,
-          cwd,
+          normalizedCwd,
           this.knownJsonlFiles,
           this.store.nextAgentId,
           this.store,

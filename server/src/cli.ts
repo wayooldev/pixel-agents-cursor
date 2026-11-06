@@ -32,7 +32,13 @@ import {
   WILDCARD_HOSTNAMES,
 } from './constants.js';
 import { FileStateAdapter } from './fileStateAdapter.js';
-import { claudeProvider, copyHookScript, hookProviderById } from './providers/index.js';
+import {
+  claudeProvider,
+  copyCursorHookScript,
+  copyHookScript,
+  cursorProvider,
+  hookProviderById,
+} from './providers/index.js';
 import { PixelAgentsServer } from './server.js';
 import { PtySessionManager } from './terminal/ptySessionManager.js';
 import { isLoopbackHost, normalizeHostname } from './wsAuth.js';
@@ -139,9 +145,21 @@ Options:
  * Claude Code spawn a dead `node` process for every event, which is strictly
  * worse than no hooks at all.
  */
-function copyHookScriptOrReport(packageRoot: string, context = ''): boolean {
-  if (copyHookScript(packageRoot)) return true;
-  console.error(`[Pixel Agents] Hooks NOT installed${context}: hook script missing.`);
+function copyProviderHookScript(packageRoot: string, providerId: string): boolean {
+  if (providerId === claudeProvider.id) return copyHookScript(packageRoot);
+  if (providerId === 'cursor') return copyCursorHookScript(packageRoot);
+  return false;
+}
+
+function copyProviderHookScriptOrReport(
+  packageRoot: string,
+  providerId: string,
+  context = '',
+): boolean {
+  if (copyProviderHookScript(packageRoot, providerId)) return true;
+  console.error(
+    `[Pixel Agents] Hooks NOT installed${context}: hook script missing for provider ${providerId}.`,
+  );
   return false;
 }
 
@@ -265,10 +283,7 @@ async function main(): Promise<void> {
         // to the Claude provider alone; another provider's install must
         // neither copy it nor be blocked by it.
         grantHooksConsent(provider.id);
-        if (
-          provider.id === claudeProvider.id &&
-          !copyHookScriptOrReport(packageRoot, ' (user toggle)')
-        ) {
+        if (!copyProviderHookScriptOrReport(packageRoot, provider.id, ' (user toggle)')) {
           return;
         }
         try {
@@ -351,43 +366,34 @@ async function main(): Promise<void> {
 
     reportTerminalStatus(ptyManager, args.host, args.terminal);
 
-    // Sync runtime refs with persisted settings BEFORE first scan tick. The
-    // runtime's single hooksEnabled ref follows the Claude provider until the
-    // scanners grow per-provider awareness alongside the Settings UI.
-    runtime.hooksEnabled.current = getHooksEnabled(claudeProvider.id);
-    runtime.watchAllSessions.current = adapter.getSetting('pixel-agents.watchAllSessions', false);
+    // Sync runtime refs with persisted settings BEFORE first scan tick. This
+    // fork's consent/Settings surface is Cursor-only.
+    runtime.hooksEnabled.current = getHooksEnabled(cursorProvider.id);
+    runtime.watchAllSessions.current = adapter.getSetting('pixel-agents.watchAllSessions', true);
 
-    // Install hooks on startup if the persisted setting says so — gated on the
-    // one-time consent to modify ~/.claude/settings.json.
+    // Refresh already-consented Cursor hooks on startup. Fresh consent is asked
+    // in the office UI (clientMessageHandler webviewReady).
     if (runtime.hooksEnabled.current) {
-      let consent = getHooksConsent(claudeProvider.id) === 'granted';
-      if (!consent && (await claudeProvider.areHooksInstalled())) {
-        // Our hooks are already installed and already firing — a pre-consent
-        // version put them there. Grant and continue with NO prompt: the
-        // install below is the 14 -> 12 migration, and it only ever REDUCES
-        // scope (it drops UserPromptSubmit and TaskCreated, the two events that
-        // forwarded prompt text and were consumed by nothing). Asking would buy
-        // this user no protection they do not already have, so they are not
-        // asked. A fresh install still is, in full — in the browser UI, when a
-        // tokened client connects (clientMessageHandler's webviewReady).
-        grantHooksConsent(claudeProvider.id);
+      let consent = getHooksConsent(cursorProvider.id) === 'granted';
+      if (!consent && (await cursorProvider.areHooksInstalled())) {
+        // Already installed and firing — grant silently (same rule as Claude's
+        // pre-consent migration path: asking buys no protection they lack).
+        grantHooksConsent(cursorProvider.id);
         consent = true;
       }
       if (!consent) {
         console.log(
-          '[Pixel Agents] Hooks not installed: modifying ~/.claude/settings.json needs one-time approval — open the URL below to review and approve it.',
+          '[Pixel Agents] Cursor hooks not installed: modifying ~/.cursor/hooks.json needs one-time approval — open the URL below to review and approve it.',
         );
-      } else if (copyHookScriptOrReport(packageRoot)) {
+      } else if (copyProviderHookScriptOrReport(packageRoot, cursorProvider.id)) {
         try {
-          await claudeProvider.installHooks(`http://127.0.0.1:${config.port}`, config.token);
-          console.log('[Pixel Agents] Hooks installed');
+          await cursorProvider.installHooks(`http://127.0.0.1:${config.port}`, config.token);
+          console.log('[Pixel Agents] Cursor hooks installed');
         } catch (err) {
           console.error(`[Pixel Agents] ${err instanceof Error ? err.message : String(err)}`);
         }
       }
     } else {
-      // Without this line, a persisted hooks-off makes startup skip the entire
-      // consent/install flow with zero output — indistinguishable from a bug.
       console.log(
         '[Pixel Agents] Hooks disabled — enable "Instant Detection (Hooks)" in the UI settings to install them.',
       );

@@ -1,0 +1,13 @@
+Pixel Agents (Cursor)
+=====================
+
+This product includes software developed as part of Pixel Agents
+(https://github.com/pixel-agents-hq/pixel-agents), Copyright (c) 2026 Pablo De Lucca,
+licensed under the MIT License. See LICENSE.
+
+Additional modifications in this repository (Cursor HookProvider, Windows desktop
+shell, consent/defaults changes, and related docs) are also provided under the
+MIT License.
+
+Character sprites are based on work by JIK-A-4 (Metro City pack); see the upstream
+README credits.

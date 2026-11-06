@@ -8,9 +8,11 @@
 
 ## Reporting a Vulnerability
 
-Please report security vulnerabilities through [GitHub's private vulnerability reporting](https://github.com/pixel-agents-hq/pixel-agents/security/advisories/new).
+Please report security vulnerabilities through [GitHub's private vulnerability reporting](https://github.com/wayooldev/pixel-agents-cursor/security/advisories/new) on **this** repository.
 
-**Do not open a public issue for security vulnerabilities.**
+If the issue also affects upstream Pixel Agents, we may ask you to report it there as well: [pixel-agents-hq/pixel-agents advisories](https://github.com/pixel-agents-hq/pixel-agents/security/advisories/new).
+
+**Do not open a public issue for security vulnerabilities.** Never paste standalone `?token=` URLs or full hook payloads with secrets.
 
 We will acknowledge your report within 7 days and aim to release a fix within 30 days of confirmation.
 
@@ -18,7 +20,8 @@ We will acknowledge your report within 7 days and aim to release a fix within 30
 
 Security issues relevant to this project include:
 
-- Command injection via terminal spawning or JSONL parsing
-- Arbitrary file read/write beyond intended paths
-- Cross-site scripting (XSS) in the webview
-- Sensitive data exposure (e.g., leaking terminal output or session content)
+- Command injection via terminal spawning, hook scripts, or JSONL parsing
+- Arbitrary file read/write beyond intended paths (including `~/.cursor/hooks.json` installers)
+- Cross-site scripting (XSS) in the webview / desktop WebView2
+- Sensitive data exposure (terminal output, session content, standalone bearer token)
+- Desktop sidecar spawn / path handling on Windows

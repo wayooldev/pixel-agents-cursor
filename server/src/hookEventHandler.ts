@@ -3,11 +3,15 @@ import * as path from 'path';
 import type { AgentEvent, HookProvider } from '../../core/src/provider.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import { SESSION_END_GRACE_MS } from './constants.js';
+import { normalizeHookWorkspacePath } from './normalizeHookWorkspacePath.js';
+import { hookProviderById } from './providers/index.js';
 import type { SessionRouter } from './sessionRouter.js';
 import { getInlineTeammates, hasInlineTeammates, hasPromotedBackgroundAgent } from './teamUtils.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
 import { notifyBackgroundAgentCompleted } from './transcriptParser.js';
 import type { AgentState } from './types.js';
+
+export { normalizeHookWorkspacePath } from './normalizeHookWorkspacePath.js';
 
 const debug = process.env.PIXEL_AGENTS_DEBUG !== '0';
 
@@ -19,6 +23,17 @@ export interface HookEvent {
   session_id: string;
   /** Additional provider-specific fields (notification_type, tool_name, etc.) */
   [key: string]: unknown;
+}
+
+/** Workspace path from a raw hook payload, ignoring transcript files. */
+function workspaceCwd(event: HookEvent): string {
+  let raw = '';
+  if (Array.isArray(event.workspace_roots)) {
+    const first = event.workspace_roots.find((root) => typeof root === 'string' && root.length > 0);
+    if (typeof first === 'string') raw = first;
+  }
+  if (!raw && typeof event.cwd === 'string') raw = event.cwd;
+  return raw ? normalizeHookWorkspacePath(raw) : '';
 }
 
 /**
@@ -58,6 +73,13 @@ interface SessionLifecycleCallbacks {
 
 export class HookEventHandler {
   private lifecycleCallbacks: SessionLifecycleCallbacks = {};
+  /**
+   * Last known workspace cwd per session_id. Cursor's sessionStart carries
+   * workspace_roots; later preToolUse/stop often do not. After the user closes
+   * a hooks-only character, re-adoption needs this memory — sessionStart will
+   * not fire again for the same conversation.
+   */
+  private readonly lastSessionCwd = new Map<string, string>();
 
   /** Highest HookProvider.protocolVersion this handler understands. */
   private static readonly SUPPORTED_PROTOCOL_VERSION = 1;
@@ -101,6 +123,16 @@ export class HookEventHandler {
     );
   }
 
+  /** Prefer the payload cwd; fall back to the last one seen for this session. */
+  private resolveSessionCwd(event: HookEvent): string {
+    const fromEvent = workspaceCwd(event);
+    if (fromEvent) {
+      this.lastSessionCwd.set(event.session_id, fromEvent);
+      return fromEvent;
+    }
+    return this.lastSessionCwd.get(event.session_id) ?? '';
+  }
+
   /** Set callbacks for session lifecycle events (SessionStart/SessionEnd). */
   setLifecycleCallbacks(callbacks: SessionLifecycleCallbacks): void {
     this.lifecycleCallbacks = callbacks;
@@ -129,9 +161,11 @@ export class HookEventHandler {
    * @param providerId - Provider that sent the event ('claude', 'codex', etc.)
    * @param event - The hook event payload from the CLI tool
    */
-  handleEvent(_providerId: string, event: HookEvent): void {
-    if (this.provider.protocolVersion !== HookEventHandler.SUPPORTED_PROTOCOL_VERSION) {
-      return; // version mismatch already logged in constructor
+  handleEvent(providerId: string, event: HookEvent): void {
+    const provider = hookProviderById(providerId);
+    if (!provider) return;
+    if (provider.protocolVersion !== HookEventHandler.SUPPORTED_PROTOCOL_VERSION) {
+      return;
     }
     // ── Provider normalization boundary ───────────────────────────────────────
     // All raw Claude-specific fields (tool_name, tool_input, agent_type, teammate_name,
@@ -140,7 +174,7 @@ export class HookEventHandler {
     // uses the normalized AgentEvent.kind. Raw `event.*` reads are still allowed in a few
     // places for provider-specific metadata that AgentEvent doesn't capture (transcript_path,
     // cwd for external-session adoption; event-specific teammate identity for routing).
-    const normalized = this.provider.normalizeHookEvent(event);
+    const normalized = provider.normalizeHookEvent(event);
     if (!normalized) return; // unknown / uninteresting event -- silently drop
     const normEvent = normalized.event;
     const eventName = event.hook_event_name; // retained for logs only
@@ -171,7 +205,12 @@ export class HookEventHandler {
       const sid = event.session_id.slice(0, 8);
       const source = normEvent.source ?? 'unknown';
       const transcriptPath = normEvent.transcriptPath;
-      const cwd = normEvent.cwd;
+      // Prefer payload workspace roots (normalized); the AgentEvent cwd may still
+      // carry Cursor's `/C:/...` form when set from sessionStart alone.
+      const cwd =
+        this.resolveSessionCwd(event) ||
+        (normEvent.cwd ? normalizeHookWorkspacePath(normEvent.cwd) : '');
+      if (cwd) this.lastSessionCwd.set(event.session_id, cwd);
       const tracked = this.isTrackedSession(transcriptPath, cwd);
       if (debug && tracked)
         console.log(`[Pixel Agents] Hook: SessionStart(source=${source}, session=${sid}...)`);
@@ -277,7 +316,7 @@ export class HookEventHandler {
         pending.cwd,
       );
       // Re-process this event now that the agent exists
-      this.handleEvent(_providerId, event);
+      this.handleEvent(providerId, event);
       return;
     }
 
@@ -290,6 +329,10 @@ export class HookEventHandler {
           break;
         }
       }
+    }
+    if (agentId === undefined && this.tryAdoptHooksOnlySession(provider, event, normEvent)) {
+      this.handleEvent(providerId, event);
+      return;
     }
     if (agentId === undefined) {
       // Buffer if: pending external session, already buffering for this session,
@@ -307,7 +350,7 @@ export class HookEventHandler {
           console.log(
             `[Pixel Agents] Hook: ${eventName} - unknown session ${event.session_id.slice(0, 8)}..., buffering`,
           );
-        this.sessionRouter.bufferEvent(_providerId, event);
+        this.sessionRouter.bufferEvent(providerId, event);
       }
       return;
     }
@@ -328,16 +371,18 @@ export class HookEventHandler {
       case 'sessionEnd':
         return this.handleSessionEnd(normEvent, agent, agentId);
       case 'toolStart':
-        return this.handlePreToolUse(normEvent, agent, agentId);
+        return this.handlePreToolUse(normEvent, agent, agentId, provider);
       case 'toolEnd':
         // Both PostToolUse and PostToolUseFailure normalize to toolEnd. Distinguishing
         // them inside handlers would require extra info; the existing behavior was
         // identical for both (agentToolDone + clear currentHookToolId), so one branch suffices.
         return this.handlePostToolUse(agent, agentId);
       case 'subagentStart':
-        return this.provider.team ? this.handleSubagentStart(event, agent, agentId) : undefined;
+        if (!provider.team) return this.handleHooksOnlySubagentStart(normEvent, agent, agentId);
+        return this.handleSubagentStart(event, agent, agentId);
       case 'subagentEnd':
-        return this.provider.team ? this.handleSubagentStop(agent, agentId) : undefined;
+        if (!provider.team) return this.handleHooksOnlySubagentStop(normEvent, agent, agentId);
+        return this.handleSubagentStop(agent, agentId);
       case 'permissionRequest':
         // Handles BOTH the PermissionRequest hook AND the Notification(permission_prompt)
         // hook -- normalizeHookEvent collapses them into one event kind.
@@ -351,7 +396,7 @@ export class HookEventHandler {
         // Handles TeammateIdle AND TaskCompleted -- both normalize here. The normalized
         // `reason` field discriminates; the team-provider's extractTeammateNameFromEvent(raw)
         // still routes to the specific teammate. (TaskCreated normalizes to null in the provider.)
-        if (!this.provider.team) return;
+        if (!provider.team) return;
         if (normEvent.reason === 'completed') {
           return this.handleTaskCompleted(event, agentId);
         }
@@ -359,7 +404,79 @@ export class HookEventHandler {
       case 'progress':
         // Not yet consumed by the office visualization. Silently drop.
         return;
+      default: {
+        const _exhaustive: never = normEvent;
+        return _exhaustive;
+      }
     }
+  }
+
+  /** Adopt a hooks-only session from workspace cwd when sessionStart was missed.
+   *  File-backed providers are skipped so Claude's transcript path stays unchanged. */
+  private tryAdoptHooksOnlySession(
+    provider: HookProvider,
+    event: HookEvent,
+    normEvent: AgentEvent,
+  ): boolean {
+    if (provider.getSessionDirs || provider.sessionFilePattern) return false;
+    if (normEvent.kind === 'sessionEnd') return false;
+    const cwd = this.resolveSessionCwd(event);
+    // Empty cwd is OK when Watch All is on (Cursor tool/stop hooks often omit
+    // workspace_roots after the conversation's first sessionStart). Otherwise
+    // we need a remembered or payload path to pass the tracked-project gate.
+    if (!cwd && !this.watchAllSessionsRef?.current) return false;
+    this.lifecycleCallbacks.onExternalSessionDetected?.(event.session_id, undefined, cwd);
+    if (this.sessionRouter.resolve(event.session_id) !== undefined) return true;
+    for (const [id, agent] of this.agents) {
+      if (agent.sessionId === event.session_id) {
+        this.registerAgent(agent.sessionId, id);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** One child character per subagent id. Stop clears that child. */
+  private handleHooksOnlySubagentStart(
+    normEvent: Extract<AgentEvent, { kind: 'subagentStart' }>,
+    agent: AgentState,
+    agentId: number,
+  ): void {
+    const childKey = normEvent.toolId;
+    let subTools = agent.activeSubagentToolIds.get(childKey);
+    if (!subTools) {
+      subTools = new Set();
+      agent.activeSubagentToolIds.set(childKey, subTools);
+    }
+    subTools.add(childKey);
+    let subNames = agent.activeSubagentToolNames.get(childKey);
+    if (!subNames) {
+      subNames = new Map();
+      agent.activeSubagentToolNames.set(childKey, subNames);
+    }
+    subNames.set(childKey, normEvent.toolName);
+    this.agents.broadcast({
+      type: 'subagentToolStart',
+      id: agentId,
+      parentToolId: childKey,
+      toolId: childKey,
+      status: `Subtask: ${normEvent.toolName}`,
+    });
+  }
+
+  private handleHooksOnlySubagentStop(
+    normEvent: Extract<AgentEvent, { kind: 'subagentEnd' }>,
+    agent: AgentState,
+    agentId: number,
+  ): void {
+    const childKey = normEvent.toolId === 'current' ? normEvent.parentToolId : normEvent.toolId;
+    agent.activeSubagentToolIds.delete(childKey);
+    agent.activeSubagentToolNames.delete(childKey);
+    this.agents.broadcast({
+      type: 'subagentClear',
+      id: agentId,
+      parentToolId: childKey,
+    });
   }
 
   /**
@@ -412,10 +529,11 @@ export class HookEventHandler {
     normEvent: Extract<AgentEvent, { kind: 'toolStart' }>,
     agent: AgentState,
     agentId: number,
+    provider: HookProvider,
   ): void {
     const toolName = normEvent.toolName;
     const toolInput = (normEvent.input as Record<string, unknown> | undefined) ?? {};
-    const status = this.provider.formatToolStatus(toolName, toolInput);
+    const status = provider.formatToolStatus(toolName, toolInput);
     const hookToolId = `hook-${Date.now()}`;
 
     // Track for PostToolUse/SubagentStart correlation (always, even if suppressed below).
@@ -424,7 +542,7 @@ export class HookEventHandler {
     agent.currentHookToolId = hookToolId;
     agent.currentHookToolName = toolName;
     agent.currentHookIsTeammateSpawn =
-      this.provider.team?.isTeammateSpawnCall(toolName, toolInput) ?? false;
+      provider.team?.isTeammateSpawnCall(toolName, toolInput) ?? false;
 
     // When a lead has inline teammates, hook tool events are ambiguous (could be
     // from the lead or any teammate -- they share session_id). Suppress hook-originated

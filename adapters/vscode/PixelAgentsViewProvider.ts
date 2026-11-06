@@ -53,7 +53,9 @@ import { applyConsentChoice } from '../../server/src/providers/hook/consentExecu
 import { hooksConsentRequest } from '../../server/src/providers/hook/consentGate.js';
 import {
   claudeProvider,
+  copyCursorHookScript,
   copyHookScript,
+  cursorProvider,
   hookProviderById,
   hookProviders,
 } from '../../server/src/providers/index.js';
@@ -265,14 +267,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       .then((config) => {
         // Server always starts regardless of hooks-enabled state.
         // It's the foundation for WebSocket transport and health monitoring.
-        // Only hook installation/script-copy is gated by the toggle. The
-        // runtime's single hooksEnabled ref follows the Claude provider until
-        // the scanners grow per-provider awareness with the Settings UI.
-        const hooksEnabled = getHooksEnabled(claudeProvider.id);
+        // Only hook installation/script-copy is gated by the toggle. This fork
+        // consents/installs Cursor hooks only (not Claude Code).
+        const hooksEnabled = getHooksEnabled(cursorProvider.id);
         this.runtime.hooksEnabled.current = hooksEnabled;
-        if (hooksEnabled) {
-          void this.installHooksIfConsented(config.port, config.token);
-        }
+        void this.installConsentedCursorHooks(config.port, config.token);
         console.log(`[Pixel Agents] Server: ready on port ${config.port}`);
       })
       .catch((e) => {
@@ -293,9 +292,15 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     port: number | undefined,
     token: string | undefined,
   ): Promise<void> {
-    // The bundled claude-hook.js script belongs to the Claude provider alone;
-    // another provider's install must neither copy it nor be blocked by it.
-    if (provider.id === claudeProvider.id && !copyHookScript(this.context.extensionPath)) {
+    // The bundled hook script belongs to one provider. Copy that provider's
+    // script before writing its settings entries, and abort when the copy fails.
+    const scriptCopied =
+      provider.id === claudeProvider.id
+        ? copyHookScript(this.context.extensionPath)
+        : provider.id === 'cursor'
+          ? copyCursorHookScript(this.context.extensionPath)
+          : false;
+    if (!scriptCopied) {
       vscode.window.showErrorMessage(
         'Pixel Agents: could not install the hook script — hooks not installed.',
       );
@@ -356,10 +361,8 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     }
     if (installed === enabled) {
       persistHooksEnabled(provider.id, enabled);
-      // The runtime's single hooksEnabled ref gates the CLAUDE scanners; it
-      // follows only the Claude provider until the scanners grow per-provider
-      // awareness alongside the Settings UI.
-      if (provider.id === claudeProvider.id) this.runtime.hooksEnabled.current = enabled;
+      // Runtime hooksEnabled follows Cursor in this fork.
+      if (provider.id === cursorProvider.id) this.runtime.hooksEnabled.current = enabled;
       console.log(`[Pixel Agents] Hooks ${enabled ? 'enabled' : 'disabled'} by user`);
     }
     // Report the truth either way: on failure the entries are still on disk and
@@ -382,44 +385,20 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  /** First-run consent gate: never touch ~/.claude/settings.json until the
-   *  user has approved it once (persisted in config.json, shared with the
-   *  standalone CLI).
-   *
-   *  The dialog itself lives in the WEBVIEW, not in a native modal: the
-   *  webviewReady handler sends a `hooksConsentRequest` and the app renders
-   *  the same consent modal the standalone browser shows, so both surfaces
-   *  ask on identical terms with one rendering. This method therefore only
-   *  handles the two populations that are NOT asked:
-   *
-   *  - Consent already recorded → install straight away.
-   *  - Our hooks ALREADY present but no recorded consent — a pre-consent
-   *    version installed them silently — consent is granted here and the
-   *    install runs with no prompt at all. That install is the 14 -> 12
-   *    migration, and it only ever REDUCES scope: it drops UserPromptSubmit
-   *    and TaskCreated, the two events that forwarded prompt text and were
-   *    consumed by nothing. Nothing this user already had is expanded, so the
-   *    friction of a prompt buys them nothing they do not already have.
-   *    (This is deliberately NOT the general rule: consent for a fresh
-   *    install is still asked for, in full, in the app.)
-   *
-   *  The fresh-install population gets nothing here — the ask happens when
-   *  the office is opened, which also means hooks are not installed until the
-   *  panel is first viewed. Fail-closed by construction: no answer, no write. */
-  private async installHooksIfConsented(port: number, token: string): Promise<void> {
-    if (getHooksConsent(claudeProvider.id) !== 'granted') {
-      if (!(await claudeProvider.areHooksInstalled())) {
-        return; // fresh install — the webview consent dialog owns this ask
-      }
-      // Already installed and already firing: grant and migrate silently.
-      grantHooksConsent(claudeProvider.id);
+  /** Refresh an already-consented Cursor install on startup. A fresh grant is
+   *  asked in the office; this only re-copies the script and rewrites owned
+   *  hooks.json entries. Claude Code hooks are not installed from this fork. */
+  private async installConsentedCursorHooks(port: number, token: string): Promise<void> {
+    if (!getHooksEnabled(cursorProvider.id)) return;
+    let consent = getHooksConsent(cursorProvider.id) === 'granted';
+    if (!consent && (await cursorProvider.areHooksInstalled().catch(() => false))) {
+      // Already installed and firing — grant silently (same pre-consent rule).
+      grantHooksConsent(cursorProvider.id);
+      consent = true;
     }
-    await this.installHooksAndScript(claudeProvider, port, token);
-    // Truthful success report for THIS path: a webviewReady handshake that
-    // raced the install read the pre-install state, and installHooksAndScript
-    // itself no longer sends an optimistic status (its other caller,
-    // setHooksEnabled, re-derives on its own).
-    await this.reportHooksStatus(claudeProvider);
+    if (!consent) return; // fresh install — the office consent dialog owns the ask
+    await this.installHooksAndScript(cursorProvider, port, token);
+    await this.reportHooksStatus(cursorProvider);
   }
 
   /** This surface's half of carrying out a consent answer for one provider. The choice→action rule and the write
@@ -440,8 +419,8 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       areHooksInstalled: () => provider.areHooksInstalled(),
       syncHooksPreferenceOff: () => {
         // Durable writes are the executor's own atomic recordHooksDecline;
-        // this only mirrors the live runtime ref the CLAUDE scanners read.
-        if (provider.id === claudeProvider.id) {
+        // this only mirrors the live runtime ref Cursor preference drives.
+        if (provider.id === cursorProvider.id) {
           this.runtime.hooksEnabled.current = false;
         }
       },
@@ -647,11 +626,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           (this.context.extension.packageJSON as { version?: string }).version ?? '';
         const watchAllSessions = this.adapter.getSetting<boolean>(
           GLOBAL_KEY_WATCH_ALL_SESSIONS,
-          false,
+          true,
         );
         const alwaysShowLabels = this.adapter.getSetting<boolean>(
           GLOBAL_KEY_ALWAYS_SHOW_LABELS,
-          false,
+          true,
         );
         const ghostHeadlessAgents = this.adapter.getSetting<boolean>(
           GLOBAL_KEY_GHOST_HEADLESS_AGENTS,
@@ -659,9 +638,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         );
         this.runtime.watchAllSessions.current = watchAllSessions;
         // settingsLoaded.hooksEnabled stays a single boolean carrying the
-        // CLAUDE provider's preference until the Settings UI grows a
+        // Cursor provider's preference until the Settings UI grows a
         // per-provider list — its sole webview reader is the hooks tooltip.
-        const hooksEnabled = getHooksEnabled(claudeProvider.id);
+        const hooksEnabled = getHooksEnabled(cursorProvider.id);
         const hooksInfoShown = this.adapter.getSetting<boolean>(GLOBAL_KEY_HOOKS_INFO_SHOWN, false);
         const showAreas = this.adapter.getSetting<boolean>(GLOBAL_KEY_SHOW_AREAS, false);
         const bypassPermissions = this.adapter.getSetting<boolean>(

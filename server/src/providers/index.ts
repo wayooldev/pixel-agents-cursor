@@ -13,17 +13,28 @@
 
 import type { HookProvider } from '../../../core/src/provider.js';
 import { claudeProvider } from './hook/claude/claude.js';
+import { cursorProvider } from './hook/cursor/cursor.js';
 
 export { claudeProvider };
+export { cursorProvider };
 export { copyHookScript } from './hook/claude/claudeHookInstaller.js';
+export { copyCursorHookScript } from './hook/cursor/cursorHookInstaller.js';
 
-/** Every bundled hook provider, in registration order. The consent gate loops
- *  over this at the webviewReady handshake (one ask per provider that needs
- *  one) and `hooksConsentResponse` resolves its provider id against it. */
-export const hookProviders: readonly HookProvider[] = [claudeProvider];
+/**
+ * Providers that can normalize inbound `/api/hooks/:providerId` events.
+ * Claude stays here so leftover Claude hooks still route if present; this
+ * fork does not offer Claude in the consent / Settings install surface.
+ */
+export const inboundHookProviders: readonly HookProvider[] = [claudeProvider, cursorProvider];
+
+/**
+ * Consent + Settings install loop. Cursor-only for this workspace: Claude Code
+ * hooks are not asked for or installed from the office UI.
+ */
+export const hookProviders: readonly HookProvider[] = [cursorProvider];
 
 /** Resolve a wire-supplied provider id, or undefined for an unknown one —
  *  the caller writes nothing on undefined (fail-closed, like a junk choice). */
 export function hookProviderById(id: unknown): HookProvider | undefined {
-  return typeof id === 'string' ? hookProviders.find((p) => p.id === id) : undefined;
+  return typeof id === 'string' ? inboundHookProviders.find((p) => p.id === id) : undefined;
 }

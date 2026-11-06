@@ -233,7 +233,7 @@ function App() {
 
   // The Settings surface renders one provider today; its checkbox binds to
   // the Claude row of the per-provider install-state map.
-  const claudeHooksInstalled = hooksInstalled['claude'] === true;
+  const cursorHooksInstalled = hooksInstalled['cursor'] === true;
 
   // Mutate Directory→Area mappings locally + send to server. Updates OfficeState in
   // the same tick so a follow-up agentCreated picks up the new mapping.
@@ -597,7 +597,7 @@ function App() {
           message), NOT the hooksEnabled preference: hooksEnabled defaults true
           while first-run consent is still pending, and announcing "Instant
           Detection Active" before anything is installed would be a lie. */}
-      {hooksEnabled && claudeHooksInstalled && !hooksInfoShown && !hooksTooltipDismissed && (
+      {hooksEnabled && cursorHooksInstalled && !hooksInfoShown && !hooksTooltipDismissed && (
         <Tooltip
           title="Instant Detection Active"
           position="top-right"
@@ -832,7 +832,7 @@ function App() {
           setWatchAllSessions(newVal);
           transport.send({ type: 'setWatchAllSessions', enabled: newVal });
         }}
-        hooksInstalled={claudeHooksInstalled}
+        hooksInstalled={cursorHooksInstalled}
         onToggleHooksEnabled={() => {
           // Toggle the DISPLAYED state (actual install), not the preference: when the two disagree — preference on,
           // nothing installed while consent is pending — toggling the preference would turn hooks OFF for a user
@@ -840,12 +840,12 @@ function App() {
           // checkbox renders, so it lands correct instead of flickering when an install fails. The providerId is
           // ECHOED from that row (never originated here), so nothing sends until the row has arrived.
           const [rowProviderId] =
-            Object.entries(hooksInstalled).find(([id]) => id === 'claude') ?? [];
+            Object.entries(hooksInstalled).find(([id]) => id === 'cursor') ?? [];
           if (rowProviderId !== undefined) {
             transport.send({
               type: 'setHooksEnabled',
               providerId: rowProviderId,
-              enabled: !claudeHooksInstalled,
+              enabled: !cursorHooksInstalled,
             });
           }
         }}

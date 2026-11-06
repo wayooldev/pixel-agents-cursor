@@ -11,7 +11,12 @@ let tmpHome: string;
 let workspaceDir: string;
 
 function makeNodeCommand(scriptPath: string): string {
-  return `${JSON.stringify(process.execPath)} ${JSON.stringify(scriptPath)}`;
+  // The mock runner matches the command against a slash-normalized path.
+  // JSON.stringify of a Windows path doubles backslashes, so the match misses
+  // and the hook never runs. Forward slashes stay intact and spawn on Windows.
+  const node = process.execPath.replace(/\\/g, '/');
+  const script = scriptPath.replace(/\\/g, '/');
+  return `${JSON.stringify(node)} ${JSON.stringify(script)}`;
 }
 
 function writeHookScript(scriptPath: string, outputPath: string): void {
@@ -54,6 +59,7 @@ function runMockClaude(
       env: {
         ...process.env,
         HOME: tmpHome,
+        USERPROFILE: tmpHome,
       },
       stdio: ['ignore', 'ignore', 'pipe'],
     });

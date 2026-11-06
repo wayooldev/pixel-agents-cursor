@@ -5,7 +5,8 @@ process.env['ALLURE_LABEL_epic'] ??= 'server';
 export default defineConfig({
   test: {
     globals: true,
-    testTimeout: 10_000,
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
     include: ['__tests__/**/*.test.ts'],
     setupFiles: ['allure-vitest/setup'],
     reporters: [

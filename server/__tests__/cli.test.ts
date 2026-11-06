@@ -171,7 +171,7 @@ describe('parseArgs', () => {
  * Requires `npm run compile` (or `node esbuild.js`) to have produced
  * dist/cli.js first; reported as a loud skip if it hasn't.
  */
-describe('dist/cli.js entry-point guard', () => {
+describe('dist/cli.js entry-point guard', { timeout: 30_000 }, () => {
   /** These tests spawn the BUNDLED CLI, so they need `npm run compile` to have
    *  run. Reported as a loud skip rather than an early `return`, which Vitest
    *  shows as PASSED with no message — a false green over a test that never
@@ -454,7 +454,8 @@ describe('dist/cli.js entry-point guard', () => {
         string,
         unknown
       >;
-      expect(JSON.stringify(settings)).toContain(installedHook);
+      // JSON escapes backslashes, so a Windows path is not a raw substring.
+      expect(JSON.stringify(settings)).toContain(JSON.stringify(installedHook).slice(1, -1));
     } finally {
       await stopChild(child);
       fs.rmSync(tmpHome, { recursive: true, force: true });

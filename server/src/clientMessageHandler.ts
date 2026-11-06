@@ -24,7 +24,12 @@ import { readLayoutFromFile, writeLayoutToFile } from './layoutPersistence.js';
 import type { ConsentEffects } from './providers/hook/consentExecutor.js';
 import { applyConsentChoice } from './providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from './providers/hook/consentGate.js';
-import { claudeProvider, hookProviderById, hookProviders } from './providers/index.js';
+import {
+  claudeProvider,
+  cursorProvider,
+  hookProviderById,
+  hookProviders,
+} from './providers/index.js';
 import type { PtySessionManager } from './terminal/ptySessionManager.js';
 import { launchStandaloneAgent } from './terminal/standaloneAgentLauncher.js';
 
@@ -385,10 +390,9 @@ async function applyHooksPreference(
     const installed = await provider.areHooksInstalled();
     if (installed === enabled) {
       setHooksEnabled(provider.id, enabled);
-      // The runtime's single hooksEnabled ref gates the CLAUDE scanners; it
-      // follows only the Claude provider until the scanners grow per-provider
-      // awareness alongside the Settings UI.
-      if (ctx.runtime && provider.id === claudeProvider.id) {
+      // The runtime's single hooksEnabled ref follows the Cursor provider in
+      // this fork (consent/Settings install Cursor only).
+      if (ctx.runtime && provider.id === cursorProvider.id) {
         ctx.runtime.hooksEnabled.current = enabled;
       }
     }
@@ -425,9 +429,8 @@ function standaloneConsentEffects(
     areHooksInstalled: () => provider.areHooksInstalled(),
     syncHooksPreferenceOff: () => {
       // Durable writes are the executor's own atomic recordHooksDecline; this
-      // only mirrors the live runtime ref the CLAUDE scanners read, so another
-      // provider's answer can never flip Claude's fallback behavior.
-      if (ctx.runtime && provider.id === claudeProvider.id) {
+      // only mirrors the live runtime ref the Cursor preference drives.
+      if (ctx.runtime && provider.id === cursorProvider.id) {
         ctx.runtime.hooksEnabled.current = false;
       }
     },
@@ -652,13 +655,13 @@ function settingsSnapshot(adapter: StateAdapter | undefined) {
     soundEnabled: adapter?.getSetting(KEY_SOUND_ENABLED, true) ?? true,
     lastSeenVersion: adapter?.getSetting(KEY_LAST_SEEN_VERSION, '') ?? '',
     extensionVersion: process.env.PIXEL_AGENTS_VERSION ?? '',
-    watchAllSessions: adapter?.getSetting(KEY_WATCH_ALL_SESSIONS, false) ?? false,
-    alwaysShowLabels: adapter?.getSetting(KEY_ALWAYS_SHOW_LABELS, false) ?? false,
+    watchAllSessions: adapter?.getSetting(KEY_WATCH_ALL_SESSIONS, true) ?? true,
+    alwaysShowLabels: adapter?.getSetting(KEY_ALWAYS_SHOW_LABELS, true) ?? true,
     ghostHeadlessAgents: adapter?.getSetting(KEY_GHOST_HEADLESS_AGENTS, false) ?? false,
-    // A single boolean carrying the CLAUDE provider's preference until the
+    // A single boolean carrying the Cursor provider's preference until the
     // Settings UI grows a per-provider list -- its sole webview reader is the
     // hooks tooltip gate.
-    hooksEnabled: getHooksEnabled(claudeProvider.id),
+    hooksEnabled: getHooksEnabled(cursorProvider.id),
     hooksInfoShown: adapter?.getSetting(KEY_HOOKS_INFO_SHOWN, false) ?? false,
     externalAssetDirectories: readConfig().externalAssetDirectories,
     showAreas: adapter?.getSetting(KEY_SHOW_AREAS, false) ?? false,

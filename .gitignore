@@ -32,6 +32,8 @@ allure-report/
 !.env.example
 
 # Project-specific
+# Local audit clones (not for commit)
+/_ref/
 .claude
 .mcp.json
 /sprites-export
@@ -50,3 +52,19 @@ agent-orchestrator.yaml
 .ao/
 .serena/
 tasks/
+
+# Desktop shell (Tauri) — staged server tree + Rust target
+/desktop/resources/server/
+/desktop/src-tauri/target/
+/desktop/node_modules/
+
+# Runtime / machine-local secrets that must never be copied into the repo
+standalone-token
+server.json
+**/hooks.json.pixel-agents.backup
+**/.pixel-agents/
+*.pem
+*.p12
+id_rsa
+id_rsa.pub
+credentials.json
