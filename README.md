@@ -53,8 +53,8 @@ Optional:
 
 3. Run:
 
-   - Portable: `desktop\src-tauri\target\release\pixel-agents-desktop.exe`
-   - Or installer: `desktop\src-tauri\target\release\bundle\nsis\Pixel Agents_0.1.0_x64-setup.exe`
+   - Installer: `desktop\src-tauri\target\release\bundle\nsis\Pixel Agents_0.1.0_x64-setup.exe` (then use `desktop/scripts/launch-pixel-agents.vbs` next to the installed exe — hidden Node sidecar; see [desktop/README.md](desktop/README.md))
+   - Or portable: `desktop\src-tauri\target\release\pixel-agents-desktop.exe`
 
 4. On first open, complete the in-app Intro and approve **Cursor hooks** (writes to `~/.cursor/hooks.json`, backup created). The printed/office URL includes a `?token=` — treat it as a secret.
 

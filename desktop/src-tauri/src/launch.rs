@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -55,6 +56,14 @@ pub fn ensure_office_running(app: &AppHandle) -> Result<OfficeLaunch, String> {
   // GUI (windows subsystem) parents must spawn node with CREATE_NO_WINDOW or
   // the console child can hang / never bind before our health poll times out.
   let log_path = server_log_path().unwrap_or_else(|| PathBuf::from("pixel-agents-desktop-server.log"));
+  if let Ok(mut meta) = fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+    let _ = writeln!(
+      meta,
+      "[Pixel Agents Desktop] spawning node cwd={} cli={}",
+      package_root.display(),
+      cli.display()
+    );
+  }
   let log_file = fs::OpenOptions::new()
     .create(true)
     .append(true)
@@ -127,10 +136,14 @@ fn wait_for_office_url() -> Result<String, String> {
     "Timed out waiting for Pixel Agents on 127.0.0.1:{OFFICE_PORT}.\n\n\
      From the staged package root run:\n\
      node dist/cli.js --port {OFFICE_PORT} --host 127.0.0.1 --no-terminal\n\n\
-     Sidecar log: {}",
+     Sidecar log: {}\n\
+     Standalone token: {}",
     server_log_path()
       .map(|p| p.display().to_string())
-      .unwrap_or_else(|| "(unavailable)".into())
+      .unwrap_or_else(|| "(unavailable)".into()),
+    standalone_token_path()
+      .map(|p| p.display().to_string())
+      .unwrap_or_else(|_| "(unavailable)".into())
   ))
 }
 
@@ -153,9 +166,10 @@ pub(crate) fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
 }
 
 pub fn resolve_node() -> Result<PathBuf, String> {
-  let node = which::which("node").map_err(|_| {
+  let node = find_node_binary().ok_or_else(|| {
     "Node.js was not found on PATH.\n\n\
-     Install Node.js 20 or newer from https://nodejs.org/ and restart Pixel Agents."
+     Install Node.js 20 or newer from https://nodejs.org/ and restart Pixel Agents.\n\
+     (Start Menu launches do not always inherit a terminal PATH — a system-wide Node install is required.)"
       .to_string()
   })?;
   let major = node_major(&node)?;
@@ -167,6 +181,29 @@ pub fn resolve_node() -> Result<PathBuf, String> {
     ));
   }
   Ok(node)
+}
+
+/// GUI apps on Windows often see a stripped PATH. Prefer `which`, then common install locations.
+fn find_node_binary() -> Option<PathBuf> {
+  if let Ok(path) = which::which("node") {
+    return Some(path);
+  }
+  let mut candidates: Vec<PathBuf> = Vec::new();
+  if let Some(pf) = std::env::var_os("ProgramFiles") {
+    candidates.push(PathBuf::from(pf).join("nodejs").join("node.exe"));
+  }
+  if let Some(pf86) = std::env::var_os("ProgramFiles(x86)") {
+    candidates.push(PathBuf::from(pf86).join("nodejs").join("node.exe"));
+  }
+  if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+    candidates.push(
+      PathBuf::from(local)
+        .join("Programs")
+        .join("nodejs")
+        .join("node.exe"),
+    );
+  }
+  candidates.into_iter().find(|p| p.is_file())
 }
 
 fn node_major(node: &Path) -> Result<u32, String> {
@@ -188,22 +225,10 @@ pub fn parse_node_major(version_text: &str) -> Option<u32> {
 }
 
 fn resolve_server_dir(app: &AppHandle) -> Result<PathBuf, String> {
-  let looks_like_package_root = |dir: &Path| dir.join("dist").join("cli.js").is_file();
-
-  if let Ok(resource_dir) = app.path().resource_dir() {
-    let bundled = resource_dir.join("server");
-    if looks_like_package_root(&bundled) {
-      return Ok(bundled);
+  for candidate in server_dir_candidates(app) {
+    if looks_like_package_root(&candidate) {
+      return Ok(candidate);
     }
-    if looks_like_package_root(&resource_dir) {
-      return Ok(resource_dir);
-    }
-  }
-
-  let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../resources/server");
-  let dev = fs::canonicalize(&dev).unwrap_or(dev);
-  if looks_like_package_root(&dev) {
-    return Ok(dev);
   }
 
   Err(format!(
@@ -212,6 +237,41 @@ fn resolve_server_dir(app: &AppHandle) -> Result<PathBuf, String> {
       .join("../resources/server")
       .display()
   ))
+}
+
+fn looks_like_package_root(dir: &Path) -> bool {
+  dir.join("dist").join("cli.js").is_file()
+}
+
+/// NSIS installs may leave the sidecar under `_up_/resources/server` next to the exe;
+/// Tauri `resource_dir` may or may not already point there depending on version.
+fn server_dir_candidates(app: &AppHandle) -> Vec<PathBuf> {
+  let mut out: Vec<PathBuf> = Vec::new();
+  let mut push = |p: PathBuf| {
+    if !out.iter().any(|existing| existing == &p) {
+      out.push(p);
+    }
+  };
+
+  if let Ok(resource_dir) = app.path().resource_dir() {
+    push(resource_dir.join("server"));
+    push(resource_dir.clone());
+    // Some Windows bundles nest another resources/ under resource_dir.
+    push(resource_dir.join("resources").join("server"));
+  }
+
+  if let Ok(exe) = std::env::current_exe() {
+    if let Some(exe_dir) = exe.parent() {
+      push(exe_dir.join("resources").join("server"));
+      push(exe_dir.join("_up_").join("resources").join("server"));
+      push(exe_dir.join("server"));
+    }
+  }
+
+  let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../resources/server");
+  push(fs::canonicalize(&dev).unwrap_or(dev));
+
+  out
 }
 
 fn port_accepts_tcp(port: u16) -> bool {

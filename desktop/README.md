@@ -16,6 +16,8 @@ It does **not** reimplement the office runtime: it starts or reuses the Node ser
 
   Then open a **new** terminal so `link.exe` is on PATH (or use the “x64 Native Tools” prompt).
 
+- **Windows 10/11 SDK** (`windows.h`) — also required for the Rust/MSVC build. If `cl.exe` fails with `Cannot open include file: 'windows.h'`, install the SDK (Visual Studio Installer → Build Tools → individual components → “Windows 11 SDK”, or `winget install Microsoft.WindowsSDK.10.0.26100`).
+
 - Repo already able to `npm run package`
 
 ## What process is launched
@@ -23,9 +25,17 @@ It does **not** reimplement the office runtime: it starts or reuses the Node ser
 When no compatible server is already on port **3100**:
 
 ```text
-node <app>/resources/server/dist/cli.js --port 3100 --host 127.0.0.1 --no-terminal
-# cwd = <app>/resources/server  (npm-style package root so dist/hooks resolves)
+node <app>/…/resources/server/dist/cli.js --port 3100 --host 127.0.0.1 --no-terminal
+# cwd = that package root (npm-style so dist/hooks resolves)
 ```
+
+NSIS installs often place the sidecar at:
+
+```text
+%LOCALAPPDATA%\Pixel Agents\_up_\resources\server\
+```
+
+`launch.rs` probes Tauri `resource_dir`, then `_up_/resources/server` next to the exe, then the staged repo path used in dev.
 
 Then the window navigates to:
 
@@ -36,6 +46,16 @@ http://127.0.0.1:3100/?token=<contents of %USERPROFILE%\.pixel-agents\standalone
 If a Pixel Agents standalone health endpoint is already up on 3100, the app **reuses** it and does not spawn Node. Closing the app kills only a child **this** launch started.
 
 `--no-terminal` keeps the MVP free of native `node-pty` packaging. Cursor hooks still work via HTTP to `127.0.0.1`.
+
+### Hidden launcher (recommended for shortcuts)
+
+Until a rebuild ships the `_up_` path lookup in the installed `.exe`, pin **Desktop / Start Menu / taskbar** to the hidden launcher instead of the raw exe:
+
+1. After NSIS install, copy `desktop/scripts/launch-pixel-agents.vbs` (and optionally `.cmd`) next to `pixel-agents-desktop.exe`.
+2. Point shortcuts at the `.vbs` (icon = `pixel-agents-desktop.exe`).
+3. The VBS starts Node with **no console / no taskbar button**, waits for `/api/health`, then opens the GUI.
+
+Log: `%USERPROFILE%\.pixel-agents\desktop-launcher.log`.
 
 ## Build
 
@@ -68,10 +88,10 @@ Portable exe: `desktop/src-tauri/target/release/pixel-agents-desktop.exe`.
 
 After install or after a release build:
 
-1. Pin the installed **Pixel Agents** shortcut, **or**
-2. Create a Desktop `.lnk` pointing at the built `.exe` (no working-directory requirement beyond PATH having `node`).
+1. Prefer a shortcut to `launch-pixel-agents.vbs` beside the installed exe (hidden Node sidecar), **or**
+2. Pin / open `pixel-agents-desktop.exe` once the rebuild includes the `_up_` server probe (still needs Node ≥ 20 on the machine).
 
-Daily use: double-click — no `cd` to the repo, no `npx`.
+Daily use: double-click the shortcut — no `cd` to the repo, no `npx`. The source tree is not required at runtime after a successful NSIS install.
 
 ## Optional: VSIX in the same compile
 
